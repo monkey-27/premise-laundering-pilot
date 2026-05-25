@@ -429,7 +429,7 @@ def score_scope_generation(task: ScopeTask, condition: str, parsed: dict[str, An
 
     probe_by_id = {row["probe_id"]: row for row in probe_scores}
     direct_correct = bool(probe_by_id.get("p1", {}).get("correct"))
-    delayed = [row for row in probe_scores if row["probe_id"] in {"p3", "p4", "p5"}]
+    delayed = [row for row in probe_scores if row["probe_type"] == "delayed_action"]
     stale_probe = probe_by_id.get("p5", {})
     delayed_accuracy = mean_bool(row["correct"] for row in delayed)
     boundary_leak = bool(change_pred & preserve_gold) or any(
