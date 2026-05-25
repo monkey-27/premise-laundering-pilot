@@ -8,14 +8,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .io import ensure_dir, read_jsonl, write_csv, write_json, write_jsonl
+from .io import ensure_dir, read_json, read_jsonl, write_csv, write_json, write_jsonl
 from .parsing import extract_json_object
 from .schema import MODEL_ID, SEED
 
 EXPERIMENT_NAME = "scope_radius_counterfactuals"
 SCOPE_CONDITIONS = ("standard_feedback", "full_regeneration", "scope_ledger")
 DOMAINS = ("tool_agent_state", "rule_policy_scope", "source_status_rag_scope")
-SCOPE_RADII = ("local_entity", "entity_class", "rule_boundary", "source_status")
+SCOPE_RADII = ("local_entity", "entity_class", "temporal_boundary", "rule_boundary")
+CORRECTION_TYPES = (
+    "upload_state",
+    "archive_status",
+    "policy_exception",
+    "policy_date",
+    "risk_review",
+    "source_validity",
+    "population_validity",
+    "causal_validity",
+    "dosage_validity",
+)
 MODEL = "Qwen/Qwen2.5-7B-Instruct"
 
 
@@ -25,9 +36,11 @@ class ScopeTask:
     base_context_id: str
     domain: str
     scope_radius: str
+    correction_type: str
     context: str
     old_trace: str
     feedback_by_condition: dict[str, str]
+    state_inventory: list[str]
     gold_direct_target: str
     gold_scope_radius: str
     gold_should_change: list[str]
@@ -47,9 +60,11 @@ class ScopeTask:
             "base_context_id": self.base_context_id,
             "domain": self.domain,
             "scope_radius": self.scope_radius,
+            "correction_type": self.correction_type,
             "context": self.context,
             "old_trace": self.old_trace,
             "feedback_by_condition": self.feedback_by_condition,
+            "state_inventory": self.state_inventory,
             "gold_direct_target": self.gold_direct_target,
             "gold_scope_radius": self.gold_scope_radius,
             "gold_should_change": self.gold_should_change,
@@ -90,6 +105,7 @@ def prepare_scope_radius_data(output_dir: str | Path, n_base_contexts: int = 40,
             "examples": len(tasks),
             "domains": dict(Counter(task.domain for task in tasks)),
             "scope_radii": dict(Counter(task.scope_radius for task in tasks)),
+            "correction_types": dict(Counter(task.correction_type for task in tasks)),
             "conditions": list(SCOPE_CONDITIONS),
             "model": MODEL,
         },
@@ -122,11 +138,41 @@ def validate_scope_radius_data(tasks_file: str | Path, expected_bases: int = 40,
             errors.append(f"{task.item_id} has wrong conditions")
         if len(task.probes) != 5:
             errors.append(f"{task.item_id} does not have 5 probes")
+        inventory = set(task.state_inventory)
+        change = set(task.gold_should_change)
+        preserve = set(task.gold_should_preserve)
+        if change & preserve:
+            errors.append(f"{task.item_id} has state keys in both change and preserve")
+        if not change <= inventory:
+            errors.append(f"{task.item_id} has change keys outside state_inventory")
+        if not preserve <= inventory:
+            errors.append(f"{task.item_id} has preserve keys outside state_inventory")
         for probe in task.probes:
             if "choices" not in probe or probe["gold_answer"] not in probe["choices"]:
                 errors.append(f"{task.item_id}/{probe.get('probe_id')} has non-closed gold answer")
+            if probe.get("state_key") not in inventory and probe.get("probe_type") not in {
+                "update_consequence",
+                "delayed_action",
+                "stale_trace_conflict",
+            }:
+                errors.append(f"{task.item_id}/{probe.get('probe_id')} state_key outside state_inventory")
+            if probe.get("probe_id") == "p4" and any(token in probe.get("question", "").lower() for token in ("can the", "approved now", "delete all")):
+                errors.append(f"{task.item_id}/p4 still uses yes/no-all wording")
         if not task.gold_should_change or not task.gold_should_preserve:
             errors.append(f"{task.item_id} missing change/preserve sets")
+        if task.metadata.get("correction_type") == "archive_status" and "gamma_upload" in task.gold_should_change:
+            errors.append(f"{task.item_id} archive-status correction changes gamma_upload")
+    for base_id, count in base_counts.items():
+        variant_change_sets = {
+            tuple(sorted(task.gold_should_change))
+            for task in tasks
+            if task.base_context_id == base_id
+        }
+        if len(variant_change_sets) < 3:
+            errors.append(f"{base_id} variants do not have three distinct gold should_change sets")
+    contrast_check = directional_contrast_sanity()
+    if contrast_check["perfect"] != 1.0 or contrast_check["wrong"] >= 1.0:
+        errors.append("directional contrast sanity check failed")
     if errors:
         raise ValueError("; ".join(errors[:12]))
     return {
@@ -134,9 +180,11 @@ def validate_scope_radius_data(tasks_file: str | Path, expected_bases: int = 40,
         "examples": len(tasks),
         "domain_counts": dict(domains),
         "scope_radius_counts": dict(radii),
+        "correction_type_counts": dict(Counter(task.correction_type for task in tasks)),
         "conditions": list(SCOPE_CONDITIONS),
         "probes_per_example": 5,
         "closed_set_probes": True,
+        "directional_contrast_sanity": contrast_check,
     }
 
 
@@ -145,10 +193,10 @@ def build_scope_prompt(task: ScopeTask, condition: str) -> str:
         raise ValueError(f"unknown condition: {condition}")
     feedback = task.feedback_by_condition[condition]
     probe_lines = "\n".join(
-        f"{probe['probe_id']}. {probe['question']}\nChoices: {' | '.join(probe['choices'])}"
+        f"{probe['probe_id']}. {_probe_question_for_condition(probe, condition)}\nChoices: {' | '.join(probe['choices'])}"
         for probe in task.probes
     )
-    allowed_keys = sorted(set(task.gold_should_change) | set(task.gold_should_preserve))
+    allowed_keys = sorted(task.state_inventory)
     allowed_key_lines = "\n".join(f"- {key}" for key in allowed_keys)
     shared = (
         "You are revising a reasoning/state trace after localized feedback. "
@@ -167,7 +215,7 @@ def build_scope_prompt(task: ScopeTask, condition: str) -> str:
     if condition == "scope_ledger":
         schema = (
             '{\n'
-            '  "correction_scope_radius": "local_entity | entity_class | rule_boundary | source_status",\n'
+            '  "correction_scope_radius": "local_entity | entity_class | temporal_boundary | rule_boundary",\n'
             '  "direct_target": "...",\n'
             '  "scope_boundary": "...",\n'
             '  "should_change": ["normalized_state_key"],\n'
@@ -188,6 +236,12 @@ def build_scope_prompt(task: ScopeTask, condition: str) -> str:
             "}"
         )
     return shared + "Return only compact JSON matching this schema:\n" + schema
+
+
+def _probe_question_for_condition(probe: dict[str, Any], condition: str) -> str:
+    if condition == "full_regeneration" and probe.get("probe_type") == "stale_trace_conflict":
+        return probe.get("no_old_trace_question") or probe["question"].replace("Given the prior trace claimed ", "Given the corrected state, ")
+    return probe["question"]
 
 
 def run_scope_radius_inference(
@@ -250,6 +304,7 @@ def run_scope_radius_inference(
                 "base_context_id": task.base_context_id,
                 "domain": task.domain,
                 "scope_radius": task.scope_radius,
+                "correction_type": task.correction_type,
                 "condition": condition,
                 "model": model,
                 "backend": backend,
@@ -276,6 +331,7 @@ def run_scope_radius_inference(
                         "base_context_id": task.base_context_id,
                         "domain": task.domain,
                         "scope_radius": task.scope_radius,
+                        "correction_type": task.correction_type,
                         "condition": condition,
                         "model": model,
                         **probe_score,
@@ -374,6 +430,7 @@ def score_scope_generation(task: ScopeTask, condition: str, parsed: dict[str, An
     probe_by_id = {row["probe_id"]: row for row in probe_scores}
     direct_correct = bool(probe_by_id.get("p1", {}).get("correct"))
     delayed = [row for row in probe_scores if row["probe_id"] in {"p3", "p4", "p5"}]
+    stale_probe = probe_by_id.get("p5", {})
     delayed_accuracy = mean_bool(row["correct"] for row in delayed)
     boundary_leak = bool(change_pred & preserve_gold) or any(
         not row["correct"] for row in probe_scores if row["probe_type"] == "boundary_preservation"
@@ -381,7 +438,35 @@ def score_scope_generation(task: ScopeTask, condition: str, parsed: dict[str, An
     under_scope = bool(change_gold - change_pred) or any(
         not row["correct"] for row in probe_scores if row["probe_type"] == "update_consequence"
     )
-    stale_reversion = bool(direct_correct and any(row["stale_follow"] for row in probe_scores))
+    stale_metric_applicable = condition != "full_regeneration"
+    exact_old_answer_reuse = bool(direct_correct and stale_probe.get("stale_follow")) if stale_metric_applicable else None
+    stale_answer = str(stale_probe.get("model_answer", ""))
+    stale_gold = str(stale_probe.get("gold_answer", ""))
+    over_conservative = bool(
+        stale_metric_applicable
+        and direct_correct
+        and stale_probe
+        and not stale_probe.get("correct")
+        and stale_answer in {"none", "no_use", "no"}
+        and stale_gold not in {"none", "no_use", "no"}
+    )
+    under_scoped_after_correction = bool(
+        stale_metric_applicable
+        and direct_correct
+        and stale_probe
+        and not stale_probe.get("correct")
+        and stale_answer in {"all", "full_use", "yes"}
+        and stale_gold not in {"all", "full_use", "yes"}
+    )
+    wrong_boundary_after_correction = bool(
+        stale_metric_applicable
+        and direct_correct
+        and stale_probe
+        and not stale_probe.get("correct")
+        and not exact_old_answer_reuse
+        and not over_conservative
+        and not under_scoped_after_correction
+    )
     scope_radius_correct = None
     if condition == "scope_ledger":
         scope_radius_correct = parsed["scope_radius"] == task.gold_scope_radius
@@ -400,7 +485,12 @@ def score_scope_generation(task: ScopeTask, condition: str, parsed: dict[str, An
         "scope_radius_correct": scope_radius_correct,
         "delayed_action_accuracy": delayed_accuracy,
         "delayed_action_all_correct": all(row["correct"] for row in delayed),
-        "stale_reversion": stale_reversion,
+        "exact_old_answer_reuse": exact_old_answer_reuse,
+        "over_conservative_after_correction": over_conservative,
+        "under_scoped_after_correction": under_scoped_after_correction,
+        "wrong_boundary_after_correction": wrong_boundary_after_correction,
+        "stale_conflict_probe_correct": bool(stale_probe.get("correct")),
+        "stale_reversion": exact_old_answer_reuse,
         "selective_scope_score": update["f1"] * preserve["f1"] * delayed_accuracy,
         "probe_scores": probe_scores,
     }
@@ -420,18 +510,33 @@ def summarize_scope_radius_run(run_dir: str | Path) -> dict[str, Any]:
         "by_condition": group_metrics(enriched, "condition"),
         "by_domain": group_metrics(enriched, "domain"),
         "by_scope_radius": group_metrics(enriched, "scope_radius"),
+        "by_correction_type": group_metrics(enriched, "correction_type"),
         "scope_contrast": aggregate_contrast(contrast_rows),
     }
     write_json(run / "metrics_summary.json", summary)
     write_metric_csv(run / "metrics_by_condition.csv", summary["by_condition"])
     write_metric_csv(run / "metrics_by_domain.csv", summary["by_domain"])
     write_metric_csv(run / "metrics_by_scope_radius.csv", summary["by_scope_radius"])
+    write_metric_csv(run / "metrics_by_correction_type.csv", summary["by_correction_type"])
     write_probe_csv(run / "metrics_by_probe_type.csv", probes, "probe_type")
     write_probe_csv(run / "metrics_by_state_key.csv", probes, "state_key")
     write_csv(
         run / "scope_contrast_metrics.csv",
         contrast_rows,
-        ["base_context_id", "condition", "model", "pairs", "gold_diff_pairs", "pred_diff_pairs", "contrast_sensitive"],
+        [
+            "base_context_id",
+            "condition",
+            "model",
+            "pairs",
+            "variant_update_set_f1",
+            "delta_added_precision",
+            "delta_added_recall",
+            "delta_added_f1",
+            "delta_removed_precision",
+            "delta_removed_recall",
+            "delta_removed_f1",
+            "directional_delta_f1",
+        ],
     )
     write_json(run / "scoring_diagnostics.json", scoring_diagnostics(enriched, probes))
     write_json(run / "qualitative_examples.json", qualitative_examples(enriched, contrast_rows))
@@ -449,6 +554,7 @@ def validate_scope_radius_run(run_dir: str | Path) -> dict[str, Any]:
         "metrics_by_condition.csv",
         "metrics_by_domain.csv",
         "metrics_by_scope_radius.csv",
+        "metrics_by_correction_type.csv",
         "metrics_by_probe_type.csv",
         "metrics_by_state_key.csv",
         "scope_contrast_metrics.csv",
@@ -474,6 +580,16 @@ def validate_scope_radius_run(run_dir: str | Path) -> dict[str, Any]:
         raise ValueError("scope-radius pilot should use only Qwen")
     if any(not row.get("raw_output") for row in generations):
         raise ValueError("raw outputs are not preserved")
+    qualitative = read_json(run / "qualitative_examples.json")
+    for key in ("all_conditions_success", "scope_ledger_success"):
+        example = qualitative.get(key)
+        if example and not (
+            example.get("direct_correction_correct")
+            and not example.get("boundary_leak")
+            and not example.get("under_scope")
+            and example.get("delayed_action_accuracy") == 1.0
+        ):
+            raise ValueError(f"qualitative example {key} does not satisfy success criteria")
     return {
         "tasks": len(tasks),
         "generations": len(generations),
@@ -496,7 +612,12 @@ def aggregate_scope_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "scope_radius_accuracy": mean_optional_bool(row["scope_radius_correct"] for row in rows),
         "delayed_action_accuracy": mean_float(row["delayed_action_accuracy"] for row in rows),
         "delayed_action_given_direct_correct": mean_float(row["delayed_action_accuracy"] for row in direct_correct_rows),
-        "stale_reversion_rate": mean_bool(row["stale_reversion"] for row in direct_correct_rows),
+        "exact_old_answer_reuse_rate": mean_optional_bool(row.get("exact_old_answer_reuse") for row in direct_correct_rows),
+        "over_conservative_after_correction_rate": mean_optional_bool(row.get("over_conservative_after_correction") for row in direct_correct_rows),
+        "under_scoped_after_correction_rate": mean_optional_bool(row.get("under_scoped_after_correction") for row in direct_correct_rows),
+        "wrong_boundary_after_correction_rate": mean_optional_bool(row.get("wrong_boundary_after_correction") for row in direct_correct_rows),
+        "stale_conflict_probe_accuracy": mean_bool(row.get("stale_conflict_probe_correct") for row in rows),
+        "stale_reversion_rate": mean_optional_bool(row.get("exact_old_answer_reuse") for row in direct_correct_rows),
         "selective_scope_score": mean_float(row["selective_scope_score"] for row in rows),
     }
 
@@ -522,6 +643,11 @@ def write_metric_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "scope_radius_accuracy",
         "delayed_action_accuracy",
         "delayed_action_given_direct_correct",
+        "exact_old_answer_reuse_rate",
+        "over_conservative_after_correction_rate",
+        "under_scoped_after_correction_rate",
+        "wrong_boundary_after_correction_rate",
+        "stale_conflict_probe_accuracy",
         "stale_reversion_rate",
         "selective_scope_score",
     ]
@@ -551,27 +677,40 @@ def scope_contrast_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for (base_id, condition, model), items in sorted(grouped.items()):
         pairs = 0
-        gold_diff = 0
-        pred_diff = 0
+        added_scores: list[dict[str, float]] = []
+        removed_scores: list[dict[str, float]] = []
+        variant_f1s = [
+            prf(set(item["parsed"]["should_change"]), set(item["gold_should_change"]))["f1"]
+            for item in items
+        ]
         for left, right in itertools.combinations(items, 2):
             pairs += 1
             gold_left = set(left["gold_should_change"])
             gold_right = set(right["gold_should_change"])
             pred_left = set(left["parsed"]["should_change"])
             pred_right = set(right["parsed"]["should_change"])
-            if gold_left != gold_right:
-                gold_diff += 1
-                if pred_left != pred_right:
-                    pred_diff += 1
+            added_scores.append(prf(pred_right - pred_left, gold_right - gold_left))
+            removed_scores.append(prf(pred_left - pred_right, gold_left - gold_right))
+        added_precision = mean_float(score["precision"] for score in added_scores)
+        added_recall = mean_float(score["recall"] for score in added_scores)
+        added_f1 = mean_float(score["f1"] for score in added_scores)
+        removed_precision = mean_float(score["precision"] for score in removed_scores)
+        removed_recall = mean_float(score["recall"] for score in removed_scores)
+        removed_f1 = mean_float(score["f1"] for score in removed_scores)
         output.append(
             {
                 "base_context_id": base_id,
                 "condition": condition,
                 "model": model,
                 "pairs": pairs,
-                "gold_diff_pairs": gold_diff,
-                "pred_diff_pairs": pred_diff,
-                "contrast_sensitive": (pred_diff / gold_diff) if gold_diff else None,
+                "variant_update_set_f1": mean_float(variant_f1s),
+                "delta_added_precision": added_precision,
+                "delta_added_recall": added_recall,
+                "delta_added_f1": added_f1,
+                "delta_removed_precision": removed_precision,
+                "delta_removed_recall": removed_recall,
+                "delta_removed_f1": removed_f1,
+                "directional_delta_f1": (added_f1 + removed_f1) / 2,
             }
         )
     return output
@@ -584,9 +723,37 @@ def aggregate_contrast(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         condition: {
             "base_contexts": len(items),
-            "scope_contrast_sensitivity": mean_float(item["contrast_sensitive"] for item in items if item["contrast_sensitive"] is not None),
+            "variant_update_set_f1": mean_float(item["variant_update_set_f1"] for item in items),
+            "directional_delta_f1": mean_float(item["directional_delta_f1"] for item in items),
+            "delta_added_f1": mean_float(item["delta_added_f1"] for item in items),
+            "delta_removed_f1": mean_float(item["delta_removed_f1"] for item in items),
         }
         for condition, items in sorted(by_condition.items())
+    }
+
+
+def directional_contrast_sanity() -> dict[str, float]:
+    base = {
+        "base_context_id": "b",
+        "condition": "c",
+        "model": "m",
+        "domain": "tool_agent_state",
+        "scope_radius": "local_entity",
+        "correction_type": "upload_state",
+    }
+    gold_rows = [
+        {**base, "gold_should_change": ["a"], "parsed": {"should_change": ["a"]}},
+        {**base, "gold_should_change": ["a", "b"], "parsed": {"should_change": ["a", "b"]}},
+        {**base, "gold_should_change": ["c"], "parsed": {"should_change": ["c"]}},
+    ]
+    wrong_rows = [
+        {**base, "gold_should_change": ["a"], "parsed": {"should_change": ["x"]}},
+        {**base, "gold_should_change": ["a", "b"], "parsed": {"should_change": ["y"]}},
+        {**base, "gold_should_change": ["c"], "parsed": {"should_change": ["z"]}},
+    ]
+    return {
+        "perfect": scope_contrast_rows(gold_rows)[0]["directional_delta_f1"],
+        "wrong": scope_contrast_rows(wrong_rows)[0]["directional_delta_f1"],
     }
 
 
@@ -620,18 +787,31 @@ def qualitative_examples(enriched: list[dict[str, Any]], contrast_rows: list[dic
                 return compact_example(row)
         return None
 
-    contrast_failure = next((row for row in contrast_rows if row["contrast_sensitive"] == 0), None)
+    contrast_failure = next((row for row in contrast_rows if row["directional_delta_f1"] < 0.5), None)
+    success = lambda row: (
+        row["parse_ok"]
+        and row["direct_correction_correct"]
+        and row["boundary_probe_correct"]
+        and row["update_set_f1"] == 1.0
+        and row["preserve_set_f1"] == 1.0
+        and row["delayed_action_all_correct"]
+        and not row["boundary_leak"]
+        and not row["under_scope"]
+    )
     return {
         "direct_correct_but_delayed_wrong": first(lambda row: row["direct_correction_correct"] and row["delayed_action_accuracy"] < 1.0),
-        "stale_reversion": first(lambda row: row["stale_reversion"]),
+        "exact_old_answer_reuse": first(lambda row: row.get("exact_old_answer_reuse")),
+        "over_conservative_after_correction": first(lambda row: row.get("over_conservative_after_correction")),
+        "under_scoped_after_correction": first(lambda row: row.get("under_scoped_after_correction")),
+        "wrong_boundary_after_correction": first(lambda row: row.get("wrong_boundary_after_correction")),
         "over_scope_boundary_leak": first(lambda row: row["boundary_leak"]),
         "under_scope_missing_update": first(lambda row: row["under_scope"]),
         "wrong_scope_radius": first(lambda row: row["condition"] == "scope_ledger" and row["scope_radius_correct"] is False),
         "full_regeneration_boundary_damage": first(lambda row: row["condition"] == "full_regeneration" and row["boundary_leak"]),
-        "scope_ledger_success": first(lambda row: row["condition"] == "scope_ledger" and row["selective_scope_score"] == 1.0),
+        "scope_ledger_success": first(lambda row: row["condition"] == "scope_ledger" and success(row)),
         "scope_ledger_failure": first(lambda row: row["condition"] == "scope_ledger" and row["selective_scope_score"] < 1.0),
         "scope_contrast_failure": contrast_failure,
-        "all_conditions_success": first(lambda row: row["selective_scope_score"] == 1.0 and row["delayed_action_all_correct"]),
+        "all_conditions_success": first(success),
         "parse_failure": first(lambda row: not row["parse_ok"]),
     }
 
@@ -642,6 +822,7 @@ def compact_example(row: dict[str, Any]) -> dict[str, Any]:
         "base_context_id": row["base_context_id"],
         "domain": row["domain"],
         "scope_radius": row["scope_radius"],
+        "correction_type": row["correction_type"],
         "condition": row["condition"],
         "gold_should_change": row["gold_should_change"],
         "pred_should_change": row["parsed"]["should_change"],
@@ -651,6 +832,8 @@ def compact_example(row: dict[str, Any]) -> dict[str, Any]:
         "delayed_action_accuracy": row["delayed_action_accuracy"],
         "boundary_leak": row["boundary_leak"],
         "under_scope": row["under_scope"],
+        "exact_old_answer_reuse": row.get("exact_old_answer_reuse"),
+        "stale_conflict_probe_correct": row.get("stale_conflict_probe_correct"),
         "raw_output": row["raw_output"],
     }
 
@@ -666,7 +849,24 @@ def _build_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, 
 def _tool_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, radius: str) -> ScopeTask:
     files = ("alpha.csv", "beta.csv", "gamma.csv")
     token_by_file = {"alpha.csv": "T7", "beta.csv": "T8", "gamma.csv": "T7"}
-    time_by_file = {"alpha.csv": "3:40 PM", "beta.csv": "4:10 PM", "gamma.csv": "4:25 PM"}
+    upload_minute_by_file = {"alpha.csv": 15 * 60 + 40, "beta.csv": 16 * 60 + 10, "gamma.csv": 16 * 60 + 25}
+    all_upload_keys = [f"{short_name(file)}_upload" for file in files]
+    all_archive_keys = [f"{short_name(file)}_archive_ready" for file in files]
+    state_inventory = sorted(
+        set(all_upload_keys)
+        | set(all_archive_keys)
+        | {
+            "alpha_token",
+            "beta_token",
+            "gamma_token",
+            "local_conversion_all",
+            "archive_endpoint",
+            "gamma_status_check",
+            "notification_sent",
+            "retry_queue",
+            "local_files_deleted",
+        }
+    )
     context = (
         f"Batch {base_idx} processed alpha.csv, beta.csv, and gamma.csv. "
         "Each file was converted locally to parquet. alpha.csv used token T7 at 3:40 PM, "
@@ -684,22 +884,41 @@ def _tool_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, r
         failed = ["gamma.csv"]
         feedback = "Correction: gamma.csv upload failed; alpha.csv and beta.csv upload status was not corrected."
         boundary = "only gamma.csv"
-        retries = "gamma"
+        retry_gold = "gamma"
+        direct_key, direct_gold = "gamma_upload", "no"
     elif radius == "entity_class":
         failed = [file for file in files if token_by_file[file] == "T7"]
         feedback = "Correction: all files uploaded with token T7 failed; files with other tokens were not affected."
         boundary = "all and only token T7 files"
-        retries = "all_token_T7"
-    elif radius == "rule_boundary":
-        failed = [file for file in files if time_by_file[file] > "4:00 PM"]
+        retry_gold = "alpha,gamma"
+        direct_key, direct_gold = "gamma_upload", "no"
+    elif radius == "temporal_boundary":
+        failed = [file for file in files if upload_minute_by_file[file] > 16 * 60]
         feedback = "Correction: uploads after 4 PM failed because the archive endpoint rotated credentials; earlier uploads were unaffected."
         boundary = "files uploaded after 4 PM"
-        retries = "beta,gamma"
+        retry_gold = "beta,gamma"
+        direct_key, direct_gold = "gamma_upload", "no"
     else:
-        failed = ["gamma.csv"]
-        feedback = "Correction: only the archive-status check for gamma.csv was stale. The actual gamma.csv upload succeeded."
-        boundary = "stale status check only; upload success is unchanged"
-        retries = "none"
+        failed = []
+        feedback = "Correction: only the archive-status readiness check for gamma.csv was stale. The actual gamma.csv upload succeeded, but gamma.csv archive readiness is unverified."
+        boundary = "gamma archive readiness only; upload success is unchanged"
+        retry_gold = "none"
+        direct_key, direct_gold = "gamma_archive_ready", "no"
+    changed_uploads = [f"{short_name(file)}_upload" for file in failed]
+    changed_archives = [f"{short_name(file)}_archive_ready" for file in failed]
+    should_change = changed_uploads + changed_archives
+    if radius == "rule_boundary":
+        should_change = ["gamma_archive_ready", "gamma_status_check"]
+    preserve = [
+        key
+        for key in all_upload_keys + all_archive_keys + ["local_conversion_all", "notification_sent"]
+        if key not in should_change
+    ]
+    boundary_file = "beta.csv" if radius == "entity_class" else "alpha.csv"
+    boundary_key = f"{short_name(boundary_file)}_upload"
+    boundary_gold = "no" if boundary_file in failed else "yes"
+    delete_gold = "all" if retry_gold == "none" and radius != "rule_boundary" else ("unaffected_only" if should_change else "none")
+    link_gold = "all" if retry_gold == "none" and radius != "rule_boundary" else "unaffected_only"
     return _task_from_parts(
         global_idx,
         base_id,
@@ -708,37 +927,46 @@ def _tool_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, r
         context,
         old_trace,
         feedback,
-        direct_key="gamma_upload",
-        should_change=[f"{short_name(file)}_upload" for file in failed] + ([f"{short_name(file)}_archive_ready" for file in failed] if radius != "source_status" else ["gamma_status_check"]),
-        should_preserve=[f"{short_name(file)}_upload" for file in files if file not in failed] + ["local_conversion_all"],
+        direct_key=direct_key,
+        state_inventory=state_inventory,
+        should_change=should_change,
+        should_preserve=preserve,
         boundary=boundary,
-        consequences=[f"retry:{retries}", "do_not_delete_all" if failed and retries != "none" else "no_retry_needed"],
+        consequences=[f"retry:{retry_gold}", f"delete:{delete_gold}", f"send_link:{link_gold}"],
         probes=[
-            probe("p1", "direct_target", "gamma_upload", "Did gamma.csv upload successfully?", ["yes", "no"], "yes" if radius == "source_status" else "no", "yes"),
-            probe("p2", "boundary_preservation", "alpha_upload", "Did alpha.csv upload successfully?", ["yes", "no"], "no" if "alpha.csv" in failed else "yes", "yes"),
+            probe("p1", "direct_target", direct_key, f"What is the corrected value for {direct_key}?", ["yes", "no"], direct_gold, "yes"),
+            probe("p2", "boundary_preservation", boundary_key, f"Did {boundary_file} upload successfully?", ["yes", "no"], boundary_gold, "yes"),
             probe(
                 "p3",
                 "update_consequence",
                 "retry_set",
                 "Which files should be retried?",
-                ["none", "alpha", "beta", "gamma", "alpha,beta", "alpha,gamma", "beta,gamma", "all", "all_token_T7", "all_after_4pm"],
-                retries,
+                ["none", "alpha", "beta", "gamma", "alpha,beta", "alpha,gamma", "beta,gamma", "all"],
+                retry_gold,
                 "none",
-                aliases={
-                    "all_token_T7": ["alpha,gamma"],
-                    "alpha,gamma": ["all_token_T7"],
-                    "all_after_4pm": ["beta,gamma"],
-                    "beta,gamma": ["all_after_4pm"],
-                },
             ),
-            probe("p4", "delayed_action", "delete_local_files", "Can the agent delete all local files now?", ["yes_all", "yes_unaffected_only", "no"], "yes_all" if retries == "none" else "yes_unaffected_only", "yes_all"),
-            probe("p5", "stale_trace_conflict", "send_archive_link", "The old trace says all uploads succeeded. Should the agent send the archive link?", ["yes", "no", "only_for_unaffected_files"], "yes" if retries == "none" else "only_for_unaffected_files", "yes"),
+            probe("p4", "delayed_action", "delete_local_files", "Which local files can be deleted now?", ["all", "unaffected_only", "none"], delete_gold, "all"),
+            probe("p5", "stale_trace_conflict", "send_archive_link", "Given the prior trace claimed all remote copies were ready, which archive links may be sent now?", ["all", "unaffected_only", "none"], link_gold, "all", no_old_trace_question="Based on the corrected state, which archive links may be sent now?"),
         ],
     )
 
 
 def _rule_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, radius: str) -> ScopeTask:
     del variant_idx
+    state_inventory = [
+        "case_a_review",
+        "case_b_review",
+        "case_c_review",
+        "case_a_waiver",
+        "case_b_waiver",
+        "case_c_waiver",
+        "case_a_finalized",
+        "case_b_finalized",
+        "case_c_finalized",
+        "domestic_renewal_boundary",
+        "submission_date_boundary",
+        "risk_level_rule",
+    ]
     context = (
         f"Policy queue {base_idx} contains Case A, Case B, and Case C. "
         "Case A is a domestic renewal submitted in 2021 with low risk. "
@@ -761,17 +989,25 @@ def _rule_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, r
         review = ["C"]
         boundary = "domestic renewals only"
         p1_key, p1_question, p1_gold = "case_c_review", "Does Case C require review?", "yes"
-    elif radius == "rule_boundary":
+    elif radius == "temporal_boundary":
         feedback = "Correction: the 2022 simplified rule applies only after Jan 1, 2022; pre-2022 cases use the legacy review rule."
         review = ["A"]
         boundary = "submission date after Jan 1, 2022"
         p1_key, p1_question, p1_gold = "case_a_review", "Does Case A require review?", "yes"
     else:
-        feedback = "Correction: the cited policy memo is valid for renewal procedure but superseded for current fee approval."
+        feedback = "Correction: high-risk cases require director review even when the expedited waiver otherwise applies."
         review = ["B"]
-        boundary = "procedure valid; current fee approval needs current source"
-        p1_key, p1_question, p1_gold = "case_b_review", "Does Case B require review before fee approval?", "yes"
+        boundary = "high-risk exception overrides expedited waiver"
+        p1_key, p1_question, p1_gold = "risk_level_rule", "Does the high-risk rule require director review?", "yes"
     review_choice = ",".join(review) if len(review) > 1 else review[0]
+    should_change = [f"case_{case.lower()}_review" for case in review]
+    if radius == "rule_boundary":
+        should_change.append("risk_level_rule")
+    should_preserve = [
+        key
+        for key in state_inventory
+        if key not in should_change and (key.endswith("_review") or key.endswith("_waiver") or key in {"domestic_renewal_boundary", "submission_date_boundary"})
+    ]
     return _task_from_parts(
         global_idx,
         base_id,
@@ -781,22 +1017,45 @@ def _rule_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, r
         old_trace,
         feedback,
         direct_key=p1_key,
-        should_change=[f"case_{case.lower()}_review" for case in review],
-        should_preserve=[f"case_{case.lower()}_status" for case in ("A", "B", "C") if case not in review] + ["domestic_renewal_boundary"],
+        state_inventory=state_inventory,
+        should_change=should_change,
+        should_preserve=should_preserve,
         boundary=boundary,
-        consequences=[f"review:{review_choice}", "do_not_finalize_all"],
+        consequences=[f"review:{review_choice}", "finalize:unaffected_only"],
         probes=[
             probe("p1", "direct_target", p1_key, p1_question, ["yes", "no"], p1_gold, "no"),
-            probe("p2", "boundary_preservation", "case_a_review", "Does Case A require review?", ["yes", "no"], "yes" if "A" in review else "no", "no"),
+            probe(
+                "p2",
+                "boundary_preservation",
+                "case_b_review" if p1_key == "case_a_review" else "case_a_review",
+                "Does Case B require review?" if p1_key == "case_a_review" else "Does Case A require review?",
+                ["yes", "no"],
+                "no",
+                "no",
+            ),
             probe("p3", "update_consequence", "review_set", "Which cases require review?", ["none", "A", "B", "C", "A,B", "A,C", "B,C", "all"], review_choice, "none"),
-            probe("p4", "delayed_action", "approve_now", "Can the request queue be approved now?", ["yes", "no", "only_for_unaffected_cases"], "only_for_unaffected_cases", "yes"),
-            probe("p5", "stale_trace_conflict", "finalize_all", "The old trace says all cases passed. Should the system finalize all cases?", ["yes", "no", "only_unaffected_cases"], "only_unaffected_cases", "yes"),
+            probe("p4", "delayed_action", "finalize_cases", "Which cases can be finalized now?", ["all", "unaffected_only", "none"], "unaffected_only", "all"),
+            probe("p5", "stale_trace_conflict", "finalize_after_old_trace", "Given the prior trace claimed all cases passed, which cases should the system finalize now?", ["all", "unaffected_only", "none"], "unaffected_only", "all", no_old_trace_question="Based on the corrected state, which cases should the system finalize now?"),
         ],
     )
 
 
 def _source_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, radius: str) -> ScopeTask:
     del variant_idx
+    state_inventory = [
+        "current_fee_source",
+        "historical_procedure_source",
+        "adult_population_support",
+        "child_population_support",
+        "association_claim_support",
+        "causal_claim_support",
+        "diagnosis_guideline_support",
+        "dosage_guideline_support",
+        "limited_citation_boundary",
+        "newer_fee_source_needed",
+        "child_specific_source_needed",
+        "causal_evidence_needed",
+    ]
     context = (
         f"Evidence packet {base_idx} has one source used for a policy answer. "
         "The source describes historical filing procedure, current fee amount, adult outcomes, child outcomes, "
@@ -812,25 +1071,36 @@ def _source_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str,
         p1_key, p1_question, p1_gold = "current_fee_source", "Can the source be used for current fees?", "no"
         historical_ok, request = "yes", "newer_fee_source"
         boundary = "current fee only"
-        changes = ["current_fee_source"]
+        changes = ["current_fee_source", "newer_fee_source_needed"]
     elif radius == "entity_class":
         feedback = "Correction: this study applies to adults, not children; adult use is unaffected."
         p1_key, p1_question, p1_gold = "child_population_support", "Can the source be used for children?", "no"
-        historical_ok, request = "yes", "adult_specific_source"
+        historical_ok, request = "yes", "child_specific_source"
         boundary = "adult population only"
-        changes = ["child_population_support"]
-    elif radius == "rule_boundary":
+        changes = ["child_population_support", "child_specific_source_needed"]
+    elif radius == "temporal_boundary":
+        feedback = "Correction: the guideline was superseded for medication dosage after Jan 1, 2023, but it remains valid for diagnosis criteria."
+        p1_key, p1_question, p1_gold = "dosage_guideline_support", "Can the guideline be used for current medication dosage?", "no"
+        historical_ok, request = "yes", "newer_dosage_source"
+        boundary = "current dosage use after Jan 1, 2023; diagnosis criteria still valid"
+        changes = ["dosage_guideline_support"]
+    else:
         feedback = "Correction: the paper shows association, not causation; associative claims are still supported."
         p1_key, p1_question, p1_gold = "causal_claim_support", "Can the source support a causal claim?", "no"
         historical_ok, request = "yes", "causal_evidence"
         boundary = "association is supported, causation is not"
-        changes = ["causal_claim_support"]
-    else:
-        feedback = "Correction: the guideline was superseded for medication dosage, but it remains valid for diagnosis criteria."
-        p1_key, p1_question, p1_gold = "dosage_guideline_support", "Can the guideline be used for medication dosage?", "no"
-        historical_ok, request = "yes", "no_new_source"
-        boundary = "dosage superseded; diagnosis criteria valid"
-        changes = ["dosage_guideline_support"]
+        changes = ["causal_claim_support", "causal_evidence_needed"]
+    preserve = [
+        key
+        for key in [
+            "historical_procedure_source",
+            "adult_population_support",
+            "association_claim_support",
+            "diagnosis_guideline_support",
+            "limited_citation_boundary",
+        ]
+        if key not in changes
+    ]
     return _task_from_parts(
         global_idx,
         base_id,
@@ -840,16 +1110,17 @@ def _source_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str,
         old_trace,
         feedback,
         direct_key=p1_key,
+        state_inventory=state_inventory,
         should_change=changes,
-        should_preserve=["historical_procedure_source", "limited_citation_boundary"],
+        should_preserve=preserve,
         boundary=boundary,
         consequences=[f"request:{request}", "limited_citation"],
         probes=[
             probe("p1", "direct_target", p1_key, p1_question, ["yes", "no"], p1_gold, "yes"),
             probe("p2", "boundary_preservation", "historical_procedure_source", "Can the source be used for historical procedure?", ["yes", "no"], historical_ok, "yes"),
-            probe("p3", "update_consequence", "requested_source", "What should be requested for the current fee or unsupported claim?", ["no_new_source", "newer_fee_source", "historical_source", "adult_specific_source", "causal_evidence"], request, "no_new_source"),
-            probe("p4", "delayed_action", "recommendation", "Can the model make the recommendation from this evidence?", ["yes", "no", "only_with_qualification"], "only_with_qualification", "yes"),
-            probe("p5", "stale_trace_conflict", "full_citation", "The old trace says the source supports the full answer. Should the model cite it for the full answer?", ["yes", "no", "only_for_limited_scope"], "only_for_limited_scope", "yes"),
+            probe("p3", "update_consequence", "requested_source", "What evidence should be requested for the unsupported use?", ["none", "newer_fee_source", "child_specific_source", "newer_dosage_source", "causal_evidence"], request, "none"),
+            probe("p4", "delayed_action", "recommendation_use", "Which citation/use is valid now?", ["full_use", "limited_use", "no_use"], "limited_use", "full_use"),
+            probe("p5", "stale_trace_conflict", "full_citation", "Given the prior trace claimed the source supports the full answer, how should it be cited now?", ["full_use", "limited_use", "no_use"], "limited_use", "full_use", no_old_trace_question="Based on the corrected source status, how should the source be cited now?"),
         ],
     )
 
@@ -863,6 +1134,7 @@ def _task_from_parts(
     old_trace: str,
     feedback: str,
     direct_key: str,
+    state_inventory: list[str],
     should_change: list[str],
     should_preserve: list[str],
     boundary: str,
@@ -879,9 +1151,11 @@ def _task_from_parts(
         base_context_id=base_id,
         domain=domain,
         scope_radius=radius,
+        correction_type=correction_type_for(domain, radius),
         context=context,
         old_trace=old_trace,
         feedback_by_condition=feedback_by_condition,
+        state_inventory=sorted(set(state_inventory)),
         gold_direct_target=direct_key,
         gold_scope_radius=radius,
         gold_should_change=sorted(set(should_change)),
@@ -889,8 +1163,26 @@ def _task_from_parts(
         gold_scope_boundary=boundary,
         gold_action_consequences=consequences,
         probes=probes,
-        metadata={"target_key": direct_key, "experiment": EXPERIMENT_NAME},
+        metadata={"target_key": direct_key, "experiment": EXPERIMENT_NAME, "correction_type": correction_type_for(domain, radius)},
     )
+
+
+def correction_type_for(domain: str, radius: str) -> str:
+    if domain == "tool_agent_state":
+        return "archive_status" if radius == "rule_boundary" else "upload_state"
+    if domain == "rule_policy_scope":
+        if radius == "local_entity":
+            return "risk_review"
+        if radius == "temporal_boundary":
+            return "policy_date"
+        return "policy_exception"
+    if radius == "local_entity":
+        return "source_validity"
+    if radius == "entity_class":
+        return "population_validity"
+    if radius == "temporal_boundary":
+        return "dosage_validity"
+    return "causal_validity"
 
 
 def probe(
@@ -902,6 +1194,7 @@ def probe(
     gold: str,
     old: str,
     aliases: dict[str, list[str]] | None = None,
+    no_old_trace_question: str | None = None,
 ) -> dict[str, Any]:
     return {
         "probe_id": probe_id,
@@ -912,6 +1205,7 @@ def probe(
         "gold_answer": gold,
         "old_trace_answer": old,
         "aliases": aliases or {},
+        "no_old_trace_question": no_old_trace_question,
     }
 
 
@@ -929,10 +1223,11 @@ def normalize_scope_radius(value: Any) -> str:
         "single": "local_entity",
         "class": "entity_class",
         "property": "entity_class",
+        "temporal": "temporal_boundary",
+        "time": "temporal_boundary",
+        "date": "temporal_boundary",
         "boundary": "rule_boundary",
         "rule": "rule_boundary",
-        "source": "source_status",
-        "status": "source_status",
     }
     for key, radius in aliases.items():
         if key in text:
@@ -986,6 +1281,16 @@ def normalize_closed_answer(answer: str, choices: list[str]) -> str:
         return "all_token_t7"
     if "after 4" in text:
         return "all_after_4pm"
+    if "unaffected" in text and "unaffected_only" in normalized_choices:
+        return "unaffected_only"
+    if "limited" in text and "limited_use" in normalized_choices:
+        return "limited_use"
+    if ("full" in text or "all" in text) and "full_use" in normalized_choices:
+        return "full_use"
+    if ("all" in text or "every" in text) and "all" in normalized_choices:
+        return "all"
+    if ("none" in text or "no " in text) and "none" in normalized_choices:
+        return "none"
     if "unaffected" in text and "file" in text:
         return "only_for_unaffected_files"
     if "unaffected" in text and ("local" in text or "delete" in text):

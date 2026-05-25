@@ -12,9 +12,10 @@ Cheap pilot for the selective correction project. The experiment tests whether a
 - Conditions: `standard_feedback`, `full_regeneration`, `scope_ledger`
 - Generations: 360
 - Domains: `tool_agent_state`, `rule_policy_scope`, `source_status_rag_scope`
-- Scope radii: `local_entity`, `entity_class`, `rule_boundary`, `source_status`
+- Scope radii: `local_entity`, `entity_class`, `temporal_boundary`, `rule_boundary`
+- Correction types are tracked separately, for example `upload_state`, `archive_status`, `policy_exception`, `source_validity`, `population_validity`, `causal_validity`, and `dosage_validity`.
 
-Every example has five closed-set probes:
+Every example has five closed-set probes with simple action labels such as `all`, `unaffected_only`, `none`, `full_use`, `limited_use`, and `no_use`:
 
 1. direct target probe
 2. boundary preservation probe
@@ -83,6 +84,7 @@ python3 -m modal volume get --force premise-laundering-runs \
 - `metrics_by_condition.csv`
 - `metrics_by_domain.csv`
 - `metrics_by_scope_radius.csv`
+- `metrics_by_correction_type.csv`
 - `metrics_by_probe_type.csv`
 - `metrics_by_state_key.csv`
 - `scope_contrast_metrics.csv`
@@ -102,6 +104,7 @@ This is not a final-answer-improvement experiment. Read these first:
 - `delayed_action_given_direct_correct`
 - `stale_reversion_rate`
 - `scope_contrast_sensitivity`
+- `directional_delta_f1`
 - `selective_scope_score`
 
 Promising signal means direct correction is high, but update radius, delayed action, stale-context, or contrast sensitivity are lower. If all metrics are above 0.90, the task is likely too easy.
