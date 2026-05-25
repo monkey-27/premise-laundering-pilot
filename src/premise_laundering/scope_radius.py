@@ -346,7 +346,11 @@ def score_scope_generation(task: ScopeTask, condition: str, parsed: dict[str, An
         answer = parsed["probe_answers"].get(probe["probe_id"], "")
         normalized_gold = normalize_choice(probe["gold_answer"])
         normalized_answer = normalize_closed_answer(answer, probe["choices"])
-        correct = normalized_answer == normalized_gold
+        aliases = {
+            normalize_choice(alias)
+            for alias in probe.get("aliases", {}).get(probe["gold_answer"], [])
+        }
+        correct = normalized_answer == normalized_gold or normalized_answer in aliases
         stale_follow = (
             probe["probe_type"] == "stale_trace_conflict"
             and normalized_answer == normalize_choice(probe.get("old_trace_answer", ""))
@@ -712,7 +716,21 @@ def _tool_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, r
         probes=[
             probe("p1", "direct_target", "gamma_upload", "Did gamma.csv upload successfully?", ["yes", "no"], "yes" if radius == "source_status" else "no", "yes"),
             probe("p2", "boundary_preservation", "alpha_upload", "Did alpha.csv upload successfully?", ["yes", "no"], "no" if "alpha.csv" in failed else "yes", "yes"),
-            probe("p3", "update_consequence", "retry_set", "Which files should be retried?", ["none", "alpha", "beta", "gamma", "alpha,beta", "alpha,gamma", "beta,gamma", "all", "all_token_T7", "all_after_4pm"], retries, "none"),
+            probe(
+                "p3",
+                "update_consequence",
+                "retry_set",
+                "Which files should be retried?",
+                ["none", "alpha", "beta", "gamma", "alpha,beta", "alpha,gamma", "beta,gamma", "all", "all_token_T7", "all_after_4pm"],
+                retries,
+                "none",
+                aliases={
+                    "all_token_T7": ["alpha,gamma"],
+                    "alpha,gamma": ["all_token_T7"],
+                    "all_after_4pm": ["beta,gamma"],
+                    "beta,gamma": ["all_after_4pm"],
+                },
+            ),
             probe("p4", "delayed_action", "delete_local_files", "Can the agent delete all local files now?", ["yes_all", "yes_unaffected_only", "no"], "yes_all" if retries == "none" else "yes_unaffected_only", "yes_all"),
             probe("p5", "stale_trace_conflict", "send_archive_link", "The old trace says all uploads succeeded. Should the agent send the archive link?", ["yes", "no", "only_for_unaffected_files"], "yes" if retries == "none" else "only_for_unaffected_files", "yes"),
         ],
@@ -875,7 +893,16 @@ def _task_from_parts(
     )
 
 
-def probe(probe_id: str, probe_type: str, state_key: str, question: str, choices: list[str], gold: str, old: str) -> dict[str, Any]:
+def probe(
+    probe_id: str,
+    probe_type: str,
+    state_key: str,
+    question: str,
+    choices: list[str],
+    gold: str,
+    old: str,
+    aliases: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
     return {
         "probe_id": probe_id,
         "probe_type": probe_type,
@@ -884,6 +911,7 @@ def probe(probe_id: str, probe_type: str, state_key: str, question: str, choices
         "choices": choices,
         "gold_answer": gold,
         "old_trace_answer": old,
+        "aliases": aliases or {},
     }
 
 
