@@ -130,6 +130,26 @@ def main() -> None:
     selective_corrected_dry.add_argument("--run-id", default="selective-corrected-dry-run")
     selective_corrected_dry.add_argument("--overwrite", action="store_true")
 
+    scope_radius_prep = subparsers.add_parser("scope-radius-prepare-data")
+    scope_radius_prep.add_argument("--output-dir", default="data/scope_radius")
+    scope_radius_prep.add_argument("--n-base-contexts", type=int, default=40)
+    scope_radius_prep.add_argument("--overwrite", action="store_true")
+
+    scope_radius_validate_data = subparsers.add_parser("scope-radius-validate-data")
+    scope_radius_validate_data.add_argument("--data-file", default="data/scope_radius/scope_radius_tasks.jsonl")
+
+    scope_radius_validate_run = subparsers.add_parser("scope-radius-validate-run")
+    scope_radius_validate_run.add_argument("--run-dir", required=True)
+
+    scope_radius_metrics = subparsers.add_parser("scope-radius-metrics")
+    scope_radius_metrics.add_argument("--run-dir", required=True)
+
+    scope_radius_dry = subparsers.add_parser("scope-radius-dry-run")
+    scope_radius_dry.add_argument("--data-file", default="data/scope_radius/scope_radius_tasks.jsonl")
+    scope_radius_dry.add_argument("--output-dir", default="runs/scope_radius")
+    scope_radius_dry.add_argument("--run-id", default="scope-radius-dry-run")
+    scope_radius_dry.add_argument("--overwrite", action="store_true")
+
     args = parser.parse_args()
     if args.command == "prepare-data":
         path = prepare_data(args.output_dir, overwrite=args.overwrite)
@@ -523,6 +543,95 @@ def main() -> None:
             tasks_filename="feedback_tasks_corrected.jsonl",
         )
         print(json.dumps({"run_dir": str(run_dir), **validate_selective_run(run_dir)}, indent=2))
+    elif args.command == "scope-radius-prepare-data":
+        from .scope_radius import prepare_scope_radius_data, validate_scope_radius_data
+
+        path = prepare_scope_radius_data(args.output_dir, n_base_contexts=args.n_base_contexts, overwrite=args.overwrite)
+        print(json.dumps({"data_file": str(path), **validate_scope_radius_data(path)}, indent=2))
+    elif args.command == "scope-radius-validate-data":
+        from .scope_radius import validate_scope_radius_data
+
+        print(json.dumps(validate_scope_radius_data(args.data_file), indent=2))
+    elif args.command == "scope-radius-validate-run":
+        from .scope_radius import validate_scope_radius_run
+
+        print(json.dumps(validate_scope_radius_run(args.run_dir), indent=2))
+    elif args.command == "scope-radius-metrics":
+        from .scope_radius import summarize_scope_radius_run
+
+        print(json.dumps(summarize_scope_radius_run(args.run_dir), indent=2))
+    elif args.command == "scope-radius-dry-run":
+        from .scope_radius import (
+            MODEL,
+            SCOPE_CONDITIONS,
+            build_scope_prompt,
+            load_scope_tasks,
+            prepare_scope_radius_data,
+            run_scope_radius_inference,
+            validate_scope_radius_run,
+        )
+
+        data_file = Path(args.data_file)
+        if not data_file.exists():
+            data_file = prepare_scope_radius_data(data_file.parent, n_base_contexts=40, overwrite=True)
+        tasks = load_scope_tasks(data_file)
+        prompt_map = {
+            build_scope_prompt(task, condition): (task, condition)
+            for task in tasks
+            for condition in SCOPE_CONDITIONS
+        }
+
+        def fake_scope_generator(prompts: list[str]) -> list[str]:
+            outputs = []
+            for prompt in prompts:
+                task, condition = prompt_map[prompt]
+                answers = {probe["probe_id"]: probe["gold_answer"] for probe in task.probes}
+                should_change = list(task.gold_should_change)
+                should_preserve = list(task.gold_should_preserve)
+                scope_radius = task.gold_scope_radius
+                if condition == "standard_feedback" and task.scope_radius in {"entity_class", "rule_boundary"}:
+                    should_change = should_change[:1]
+                    for probe in task.probes:
+                        if probe["probe_id"] in {"p3", "p5"}:
+                            answers[probe["probe_id"]] = probe["old_trace_answer"]
+                if condition == "full_regeneration":
+                    should_preserve = []
+                    if task.scope_radius == "local_entity":
+                        for probe in task.probes:
+                            if probe["probe_type"] == "boundary_preservation":
+                                answers[probe["probe_id"]] = "no" if probe["gold_answer"] == "yes" else "yes"
+                if condition == "scope_ledger" and task.scope_radius == "source_status":
+                    scope_radius = "rule_boundary"
+                payload = {
+                    "direct_target": task.gold_direct_target,
+                    "should_change": should_change,
+                    "should_preserve": should_preserve,
+                    "immediate_answers": {"p1": answers["p1"], "p2": answers["p2"]},
+                    "delayed_action_answers": {"p3": answers["p3"], "p4": answers["p4"], "p5": answers["p5"]},
+                }
+                if condition == "scope_ledger":
+                    payload.update(
+                        {
+                            "correction_scope_radius": scope_radius,
+                            "scope_boundary": task.gold_scope_boundary,
+                            "action_consequences": task.gold_action_consequences,
+                        }
+                    )
+                outputs.append(json.dumps(payload))
+            return outputs
+
+        run_dir = run_scope_radius_inference(
+            tasks=tasks,
+            generator=fake_scope_generator,
+            output_base_dir=args.output_dir,
+            run_id=args.run_id,
+            model=f"{MODEL}-dry-run",
+            backend="fake_generator",
+            overwrite=args.overwrite,
+            batch_size=64,
+            generation_config={"engine": "fake_scope_radius_generator"},
+        )
+        print(json.dumps({"run_dir": str(run_dir), **validate_scope_radius_run(run_dir)}, indent=2))
 
 
 if __name__ == "__main__":

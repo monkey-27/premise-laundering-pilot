@@ -20,6 +20,8 @@ SELECTIVE_DATA_DIR = "/cache/selective_data"
 SELECTIVE_RUNS_DIR = "/outputs/selective_runs"
 SELECTIVE_CORRECTED_DATA_DIR = "/cache/selective_corrected_data"
 SELECTIVE_CORRECTED_RUNS_DIR = "/outputs/selective_corrected_runs"
+SCOPE_RADIUS_DATA_DIR = "/cache/scope_radius_data"
+SCOPE_RADIUS_RUNS_DIR = "/outputs/scope_radius_runs"
 
 LOCAL_SRC = Path(__file__).parent / "src"
 if str(LOCAL_SRC) not in sys.path:
@@ -136,6 +138,20 @@ def prepare_selective_corrected_data(overwrite: bool = False, n: int = 96) -> st
     result = validate_selective_corrected_data(path, expected=n)
     cache_volume.commit()
     return f"Prepared {result['examples']} corrected selective-correction tasks at {path}"
+
+
+@app.function(
+    volumes={CACHE_DIR: cache_volume},
+    timeout=30 * 60,
+)
+def prepare_scope_radius_data(overwrite: bool = False, n_base_contexts: int = 40) -> str:
+    from premise_laundering.scope_radius import prepare_scope_radius_data as prepare
+    from premise_laundering.scope_radius import validate_scope_radius_data
+
+    path = prepare(SCOPE_RADIUS_DATA_DIR, n_base_contexts=n_base_contexts, overwrite=overwrite)
+    result = validate_scope_radius_data(path, expected_bases=n_base_contexts, expected_examples=n_base_contexts * 3)
+    cache_volume.commit()
+    return f"Prepared {result['examples']} scope-radius counterfactual tasks at {path}"
 
 
 @app.function(
@@ -449,6 +465,55 @@ def run_selective_corrected(
 
 
 @app.function(
+    gpu="A10G",
+    volumes={CACHE_DIR: cache_volume, "/outputs": runs_volume},
+    timeout=60 * 60 * 4,
+)
+def run_scope_radius(
+    run_id: str,
+    overwrite: bool = False,
+    batch_size: int = 1,
+    n_base_contexts: int = 40,
+) -> str:
+    from premise_laundering.scope_radius import (
+        MODEL,
+        SCOPE_CONDITIONS,
+        load_scope_tasks,
+        prepare_scope_radius_data,
+        run_scope_radius_inference,
+        validate_scope_radius_run,
+    )
+    from premise_laundering.transformers_runner import TransformersGenerator
+    from premise_laundering.transformers_runner import generation_config
+
+    data_file = prepare_scope_radius_data(SCOPE_RADIUS_DATA_DIR, n_base_contexts=n_base_contexts, overwrite=False)
+    tasks = load_scope_tasks(data_file)
+    generator = TransformersGenerator(model=MODEL, max_new_tokens=520, temperature=0.2, top_p=0.9)
+    config = generation_config()
+    config.update({"model": MODEL, "max_new_tokens": 520, "task": "scope_radius_counterfactuals"})
+    run_dir = run_scope_radius_inference(
+        tasks=tasks,
+        generator=generator,
+        output_base_dir=SCOPE_RADIUS_RUNS_DIR,
+        run_id=run_id,
+        model=MODEL,
+        backend="transformers",
+        overwrite=overwrite,
+        batch_size=batch_size,
+        conditions=SCOPE_CONDITIONS,
+        generation_config=config,
+    )
+    result = validate_scope_radius_run(run_dir)
+    cache_volume.commit()
+    runs_volume.commit()
+    return (
+        f"Completed scope-radius run at {run_dir}; "
+        f"generations={result['generations']} probe_results={result['probe_results']} "
+        f"parse_rate={result['parse_rate']}"
+    )
+
+
+@app.function(
     volumes={"/outputs": runs_volume},
     timeout=15 * 60,
 )
@@ -523,6 +588,19 @@ def summarize_selective_corrected_metrics(run_id: str) -> dict:
 
     run_dir = Path(SELECTIVE_CORRECTED_RUNS_DIR) / run_id
     summary = summarize_selective_run(run_dir)
+    runs_volume.commit()
+    return summary
+
+
+@app.function(
+    volumes={"/outputs": runs_volume},
+    timeout=15 * 60,
+)
+def summarize_scope_radius_metrics(run_id: str) -> dict:
+    from premise_laundering.scope_radius import summarize_scope_radius_run
+
+    run_dir = Path(SCOPE_RADIUS_RUNS_DIR) / run_id
+    summary = summarize_scope_radius_run(run_dir)
     runs_volume.commit()
     return summary
 
@@ -662,6 +740,8 @@ def main(
         print(prepare_selective_data.remote(overwrite=overwrite, n=320 if n == 99 else n))
     elif action == "selective-corrected-prepare":
         print(prepare_selective_corrected_data.remote(overwrite=overwrite, n=96 if n == 99 else n))
+    elif action == "scope-radius-prepare":
+        print(prepare_scope_radius_data.remote(overwrite=overwrite, n_base_contexts=40 if n == 99 else n))
     elif action == "run":
         print(
             run_pilot.remote(
@@ -743,6 +823,17 @@ def main(
                 n=96 if n == 99 else n,
             )
         )
+    elif action == "scope-radius-run":
+        if not run_id:
+            raise ValueError("run_id is required for action=scope-radius-run")
+        print(
+            run_scope_radius.remote(
+                run_id=run_id,
+                overwrite=overwrite,
+                batch_size=batch_size,
+                n_base_contexts=40 if n == 99 else n,
+            )
+        )
     elif action == "metrics":
         if not run_id:
             raise ValueError("run_id is required for action=metrics")
@@ -767,6 +858,10 @@ def main(
         if not run_id:
             raise ValueError("run_id is required for action=selective-corrected-metrics")
         print(summarize_selective_corrected_metrics.remote(run_id=run_id))
+    elif action == "scope-radius-metrics":
+        if not run_id:
+            raise ValueError("run_id is required for action=scope-radius-metrics")
+        print(summarize_scope_radius_metrics.remote(run_id=run_id))
     elif action == "controlled-merge":
         if not run_id:
             raise ValueError("run_id is required as the merged run id for action=controlled-merge")
@@ -834,5 +929,6 @@ def main(
             "prefix-prepare, prefix-run, prefix-metrics, prefix-merge, "
             "diagnostic-prepare, diagnostic-run, diagnostic-metrics, diagnostic-merge, "
             "selective-prepare, selective-run, selective-metrics, selective-merge, "
-            "selective-corrected-prepare, selective-corrected-run, selective-corrected-metrics"
+            "selective-corrected-prepare, selective-corrected-run, selective-corrected-metrics, "
+            "scope-radius-prepare, scope-radius-run, scope-radius-metrics"
         )

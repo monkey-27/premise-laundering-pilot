@@ -396,3 +396,17 @@ AND generated prefix has an answer-relevant false observation
 AND original-prefix continuation is wrong
 AND deleted or neutralized prefix continuation is correct
 ```
+
+## Scope Radius Counterfactuals
+
+The `scope_radius_counterfactuals` pilot is a cheaper, sharper selective-correction follow-up. It uses 40 base contexts, 3 feedback variants per context, Qwen only, and three prompt conditions to test whether the model infers the correct update radius and uses it under delayed action and stale-trace pressure.
+
+See `scope_radius_counterfactuals_README.md` for the focused protocol and exact commands.
+
+```bash
+PYTHONPATH=src python3 -m premise_laundering.cli scope-radius-prepare-data --output-dir data/scope_radius --overwrite
+PYTHONPATH=src python3 -m premise_laundering.cli scope-radius-dry-run --data-file data/scope_radius/scope_radius_tasks.jsonl --output-dir runs/scope_radius --run-id scope-radius-dry --overwrite
+
+python3 -m modal run modal_app.py --action scope-radius-prepare --n 40
+python3 -m modal run modal_app.py --action scope-radius-run --run-id scope-radius-YYYYMMDD-qwen-small --batch-size 1 --n 40
+```
