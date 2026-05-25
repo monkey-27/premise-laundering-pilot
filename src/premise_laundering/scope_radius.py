@@ -148,13 +148,17 @@ def build_scope_prompt(task: ScopeTask, condition: str) -> str:
         f"{probe['probe_id']}. {probe['question']}\nChoices: {' | '.join(probe['choices'])}"
         for probe in task.probes
     )
+    allowed_keys = sorted(set(task.gold_should_change) | set(task.gold_should_preserve))
+    allowed_key_lines = "\n".join(f"- {key}" for key in allowed_keys)
     shared = (
         "You are revising a reasoning/state trace after localized feedback. "
         "Infer the exact scope/radius of the correction: what changes, what downstream actions change, "
         "what stays unchanged, and where the correction stops applying. "
-        "Use only the provided context and feedback. Answer every probe with exactly one listed choice.\n\n"
+        "Use only the provided context and feedback. Answer every probe with exactly one listed choice. "
+        "For should_change and should_preserve, use only the allowed normalized state keys listed below.\n\n"
         f"Context:\n{task.context}\n\n"
         f"Feedback:\n{feedback}\n\n"
+        f"Allowed normalized state keys:\n{allowed_key_lines}\n\n"
         f"Probes:\n{probe_lines}\n\n"
     )
     if condition != "full_regeneration":
@@ -681,7 +685,7 @@ def _tool_task(base_idx: int, variant_idx: int, global_idx: int, base_id: str, r
         failed = [file for file in files if token_by_file[file] == "T7"]
         feedback = "Correction: all files uploaded with token T7 failed; files with other tokens were not affected."
         boundary = "all and only token T7 files"
-        retries = "alpha,gamma"
+        retries = "all_token_T7"
     elif radius == "rule_boundary":
         failed = [file for file in files if time_by_file[file] > "4:00 PM"]
         feedback = "Correction: uploads after 4 PM failed because the archive endpoint rotated credentials; earlier uploads were unaffected."
@@ -956,6 +960,8 @@ def normalize_closed_answer(answer: str, choices: list[str]) -> str:
         return "all_after_4pm"
     if "unaffected" in text and "file" in text:
         return "only_for_unaffected_files"
+    if "unaffected" in text and ("local" in text or "delete" in text):
+        return "yes_unaffected_only"
     if "unaffected" in text and "case" in text:
         return "only_unaffected_cases"
     if "limited" in text or "partial" in text or "qualified" in text:
