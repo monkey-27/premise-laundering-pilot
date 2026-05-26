@@ -6,5 +6,13 @@ __pycache__/
 .modal/
 runs/
 data/
+!data/
+data/*
+!data/tracepatch/
+!data/tracepatch/tracepatch_micro_v1.jsonl
+!data/tracepatch/tracepatch_micro_v1.manifest.json
 outputs/
+!outputs/
+outputs/*
+!outputs/tracepatch_micro_v1/
 *.egg-info/

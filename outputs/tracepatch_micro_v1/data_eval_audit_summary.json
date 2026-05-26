@@ -1,0 +1,17 @@
+{
+  "ambiguous_or_invalid_rate": 0.0,
+  "data_valid_rate": 1.0,
+  "feedback_low_locality_rate": 0.0,
+  "gold_answer_checker_failure_rate": 0.0,
+  "n_ambiguous_or_invalid_examples": 0,
+  "n_data_valid_auto": 60,
+  "n_examples": 60,
+  "n_feedback_low_locality": 0,
+  "n_gold_answer_checker_failures": 0,
+  "n_prefix_damage_metric_low_confidence": 0,
+  "n_repeated_error_metric_low_confidence": 0,
+  "n_wrong_answer_checker_false_negatives": 0,
+  "prefix_damage_metric_low_confidence_rate": 0.0,
+  "repeated_error_metric_low_confidence_rate": 0.0,
+  "wrong_answer_checker_false_negative_rate": 0.0
+}

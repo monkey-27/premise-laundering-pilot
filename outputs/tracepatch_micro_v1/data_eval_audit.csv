@@ -1,0 +1,61 @@
+example_id,domain,problem_parse_ok,checker_spec_parse_ok,gold_answer_present,gold_answer_passes_checker,checker_feedback_nonempty_on_wrong_answer,problem_ambiguous_flag,answer_leakage_flag,duplicate_or_near_duplicate_flag,data_valid_auto,unit_tests_present,canonical_solution_passes_tests,intentionally_wrong_solution_fails_tests,test_count,unsafe_code_flag,gold_answer_normalizes,wrong_answer_fails_checker,arithmetic_checker_available,exact_answer_type,evidence_present,gold_answer_supported_by_evidence,distractor_answer_contradicted_or_unsupported,evidence_sentence_selected,unsupported_ambiguity_flag,checker_false_negative_flag,checker_false_positive_flag,feedback_locality_score_auto,evaluator_valid_auto,prefix_damage_metric_available,prefix_damage_metric_confidence,repeated_error_metric_available,repeated_error_metric_confidence,localization_metric_available,localization_metric_confidence
+code_00,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_01,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_02,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_03,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_04,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_05,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_06,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_07,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_08,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_09,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_10,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_11,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_12,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_13,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_14,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_15,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_16,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_17,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_18,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+code_19,code,True,True,True,True,True,False,False,False,True,True,True,True,3,False,,True,False,,False,,,,False,False,False,2,True,True,high,True,high,False,unavailable
+math_00,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_01,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_02,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_03,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_04,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_05,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_06,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_07,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_08,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,fraction,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_09,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_10,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_11,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_12,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_13,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_14,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_15,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_16,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_17,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_18,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+math_19,math,True,True,True,True,True,False,False,False,True,False,,,,False,True,True,True,integer,False,,,,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_00,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The Fenn tablet weighs 455 grams.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_01,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,West Clinic opens at 7 AM.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_02,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The blue route stops at Cedar and Oak.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_03,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Jules submitted it on Monday.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_04,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The silver key opens Room 5.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_05,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Beacon battery lasts 11 hours.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_06,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The pine sample is 18 cm.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_07,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Team B scored 18.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_08,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The library is closed on Sunday.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_09,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Package Y arrived at Dock 1.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_10,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Ben chose mint.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_11,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The east sensor reports 23 C.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_12,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Book Echo has 220 pages.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_13,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The bronze plan costs $12.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_14,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Lab B uses reagent Q.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_15,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The tram leaves at 6:45.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_16,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Kai's badge is yellow.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_17,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The sigma file is 9 MB.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_18,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,Zone 2 requires goggles.,False,False,False,2,True,True,medium,True,medium,True,medium
+rag_19,rag,True,True,True,True,True,False,False,False,True,False,,,,False,,True,False,,True,True,True,The cedar crate contains pears.,False,False,False,2,True,True,medium,True,medium,True,medium

@@ -53,15 +53,16 @@ class TransformersGenerator:
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=8192)
         if torch.cuda.is_available():
             inputs = {key: value.to("cuda") for key, value in inputs.items()}
+        generate_kwargs = {
+            **inputs,
+            "max_new_tokens": self.max_new_tokens,
+            "do_sample": self.temperature > 0,
+            "pad_token_id": self.tokenizer.eos_token_id,
+        }
+        if self.temperature > 0:
+            generate_kwargs.update({"temperature": self.temperature, "top_p": self.top_p})
         with torch.inference_mode():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=True,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                pad_token_id=self.tokenizer.eos_token_id,
-            )
+            outputs = self.model.generate(**generate_kwargs)
         generated = outputs[0][inputs["input_ids"].shape[-1] :]
         return self.tokenizer.decode(generated, skip_special_tokens=True)
 
@@ -86,15 +87,16 @@ class TransformersGenerator:
         )
         if torch.cuda.is_available():
             inputs = {key: value.to("cuda") for key, value in inputs.items()}
+        generate_kwargs = {
+            **inputs,
+            "max_new_tokens": self.max_new_tokens,
+            "do_sample": self.temperature > 0,
+            "pad_token_id": self.tokenizer.pad_token_id,
+        }
+        if self.temperature > 0:
+            generate_kwargs.update({"temperature": self.temperature, "top_p": self.top_p})
         with torch.inference_mode():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=True,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                pad_token_id=self.tokenizer.pad_token_id,
-            )
+            outputs = self.model.generate(**generate_kwargs)
         prompt_width = inputs["input_ids"].shape[-1]
         return [
             self.tokenizer.decode(output[prompt_width:], skip_special_tokens=True)

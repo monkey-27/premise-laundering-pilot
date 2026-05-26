@@ -22,6 +22,8 @@ SELECTIVE_CORRECTED_DATA_DIR = "/cache/selective_corrected_data"
 SELECTIVE_CORRECTED_RUNS_DIR = "/outputs/selective_corrected_runs"
 SCOPE_RADIUS_DATA_DIR = "/cache/scope_radius_data"
 SCOPE_RADIUS_RUNS_DIR = "/outputs/scope_radius_runs"
+TRACEPATCH_DATA_DIR = "/cache/tracepatch_data"
+TRACEPATCH_RUNS_DIR = "/outputs/tracepatch_runs"
 
 LOCAL_SRC = Path(__file__).parent / "src"
 if str(LOCAL_SRC) not in sys.path:
@@ -38,6 +40,8 @@ image = (
         "pandas>=2.2.0",
         "pyarrow>=15.0.0",
         "tqdm>=4.66.0",
+        "torch>=2.2.0",
+        "transformers>=4.41.0,<5.0.0",
         "vllm>=0.5.0",
     )
     .env(
@@ -49,6 +53,7 @@ image = (
         }
     )
     .add_local_python_source("premise_laundering")
+    .add_local_python_source("tracepatch")
 )
 
 app = modal.App(APP_NAME, image=image)
@@ -152,6 +157,26 @@ def prepare_scope_radius_data(overwrite: bool = False, n_base_contexts: int = 40
     result = validate_scope_radius_data(path, expected_bases=n_base_contexts, expected_examples=n_base_contexts * 3)
     cache_volume.commit()
     return f"Prepared {result['examples']} scope-radius counterfactual tasks at {path}"
+
+
+@app.function(
+    volumes={CACHE_DIR: cache_volume, "/outputs": runs_volume},
+    timeout=30 * 60,
+)
+def prepare_tracepatch_micro(overwrite: bool = False) -> str:
+    from tracepatch.micro import prepare_micro_data, read_jsonl, run_data_eval_audit, hard_fail_audit
+
+    path = prepare_micro_data(TRACEPATCH_DATA_DIR, overwrite=overwrite)
+    examples = read_jsonl(path)
+    _, audit_summary, _ = run_data_eval_audit(examples)
+    errors = hard_fail_audit(audit_summary)
+    if len(examples) != 60:
+        errors.append(f"expected 60 examples, found {len(examples)}")
+    if errors:
+        raise ValueError(f"TracePatch preflight audit failed: {errors}; summary={audit_summary}")
+    cache_volume.commit()
+    runs_volume.commit()
+    return f"Prepared TracePatch micro data at {path}; audit={audit_summary}"
 
 
 @app.function(
@@ -514,6 +539,32 @@ def run_scope_radius(
 
 
 @app.function(
+    gpu="A10G",
+    volumes={CACHE_DIR: cache_volume, "/outputs": runs_volume},
+    timeout=60 * 60 * 8,
+)
+def run_tracepatch_micro(
+    run_id: str = "tracepatch_micro_v1",
+    overwrite: bool = False,
+    batch_size: int = 2,
+) -> str:
+    from tracepatch.micro import prepare_micro_data, read_json, run_micro
+
+    data_file = prepare_micro_data(TRACEPATCH_DATA_DIR, overwrite=False)
+    run_dir = Path(TRACEPATCH_RUNS_DIR) / run_id
+    if run_dir.exists() and not overwrite:
+        raise FileExistsError(f"{run_dir} exists; pass overwrite=True to replace it")
+    run_micro(data_file=data_file, output_dir=run_dir, batch_size=batch_size)
+    summary = read_json(run_dir / "summary.json")
+    cache_volume.commit()
+    runs_volume.commit()
+    return (
+        f"Completed TracePatch micro run at {run_dir}; "
+        f"initial={summary['initial']} verdict={summary['verdict']}"
+    )
+
+
+@app.function(
     volumes={"/outputs": runs_volume},
     timeout=15 * 60,
 )
@@ -742,6 +793,8 @@ def main(
         print(prepare_selective_corrected_data.remote(overwrite=overwrite, n=96 if n == 99 else n))
     elif action == "scope-radius-prepare":
         print(prepare_scope_radius_data.remote(overwrite=overwrite, n_base_contexts=40 if n == 99 else n))
+    elif action == "tracepatch-prepare":
+        print(prepare_tracepatch_micro.remote(overwrite=overwrite))
     elif action == "run":
         print(
             run_pilot.remote(
@@ -832,6 +885,14 @@ def main(
                 overwrite=overwrite,
                 batch_size=batch_size,
                 n_base_contexts=40 if n == 99 else n,
+            )
+        )
+    elif action == "tracepatch-run":
+        print(
+            run_tracepatch_micro.remote(
+                run_id=run_id or "tracepatch_micro_v1",
+                overwrite=overwrite,
+                batch_size=batch_size,
             )
         )
     elif action == "metrics":
@@ -930,5 +991,6 @@ def main(
             "diagnostic-prepare, diagnostic-run, diagnostic-metrics, diagnostic-merge, "
             "selective-prepare, selective-run, selective-metrics, selective-merge, "
             "selective-corrected-prepare, selective-corrected-run, selective-corrected-metrics, "
-            "scope-radius-prepare, scope-radius-run, scope-radius-metrics"
+            "scope-radius-prepare, scope-radius-run, scope-radius-metrics, "
+            "tracepatch-prepare, tracepatch-run"
         )

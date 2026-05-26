@@ -1,0 +1,171 @@
+{
+  "aggregate": {
+    "edit_only_repair": {
+      "final_accuracy": 0.8166666666666667,
+      "n_repairs": 27,
+      "parse_error_rate": 0.1111111111111111,
+      "prefix_damage_rate": 0.037037037037037035,
+      "repair_success_on_failed": 0.18518518518518517,
+      "repeated_error_rate": 0.7407407407407407
+    },
+    "full_regeneration": {
+      "final_accuracy": 0.85,
+      "n_repairs": 27,
+      "parse_error_rate": 0.18518518518518517,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.3333333333333333,
+      "repeated_error_rate": 0.48148148148148145
+    },
+    "self_correction": {
+      "final_accuracy": 0.8166666666666667,
+      "n_repairs": 27,
+      "parse_error_rate": 0.14814814814814814,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.18518518518518517,
+      "repeated_error_rate": 0.7037037037037037
+    },
+    "tracepatch": {
+      "final_accuracy": 0.825,
+      "n_repairs": 27,
+      "parse_error_rate": 0.14814814814814814,
+      "prefix_damage_rate": 0.1111111111111111,
+      "repair_success_on_failed": 0.2222222222222222,
+      "repeated_error_rate": 0.48148148148148145
+    }
+  },
+  "audit": {
+    "ambiguous_or_invalid_rate": 0.0,
+    "data_valid_rate": 1.0,
+    "feedback_low_locality_rate": 0.0,
+    "gold_answer_checker_failure_rate": 0.0,
+    "n_ambiguous_or_invalid_examples": 0,
+    "n_data_valid_auto": 60,
+    "n_examples": 60,
+    "n_feedback_low_locality": 0,
+    "n_gold_answer_checker_failures": 0,
+    "n_prefix_damage_metric_low_confidence": 0,
+    "n_repeated_error_metric_low_confidence": 0,
+    "n_wrong_answer_checker_false_negatives": 0,
+    "prefix_damage_metric_low_confidence_rate": 0.0,
+    "repeated_error_metric_low_confidence_rate": 0.0,
+    "wrong_answer_checker_false_negative_rate": 0.0
+  },
+  "initial": {
+    "Qwen/Qwen2.5-7B-Instruct": {
+      "accuracy": 0.85,
+      "failure_rate": 0.15,
+      "n_failed": 9
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3": {
+      "accuracy": 0.7,
+      "failure_rate": 0.3,
+      "n_failed": 18
+    }
+  },
+  "models": [
+    "Qwen/Qwen2.5-7B-Instruct",
+    "mistralai/Mistral-7B-Instruct-v0.3"
+  ],
+  "n_examples": 60,
+  "oracle_overlap": {
+    "n_oracle_repairs": 7,
+    "note": "Code oracle localization is skipped by design unless deterministic localization is available.",
+    "oracle_gap": 0.0,
+    "oracle_success": 0.2857142857142857,
+    "tracepatch_success_on_oracle_overlap": 0.2857142857142857
+  },
+  "scale_criteria": {
+    "oracle_gap": 0.0,
+    "parse_error_rate_tracepatch": 0.14814814814814814,
+    "passes_scale_gate": false,
+    "prefix_damage_drop_vs_full_regeneration": 0.0,
+    "repeated_error_drop_vs_full_regeneration": 0.0,
+    "repeated_error_drop_vs_self_correction": 0.31578947368421056,
+    "tracepatch_gain_over_edit_only_repair": 0.008333333333333304,
+    "tracepatch_gain_over_full_regeneration": -0.025000000000000022,
+    "tracepatch_gain_over_self_correction": 0.008333333333333304
+  },
+  "systems": {
+    "Qwen/Qwen2.5-7B-Instruct|edit_only_repair": {
+      "final_accuracy": 0.9,
+      "generated_token_count": 55.888888888888886,
+      "parse_error_rate": 0.2222222222222222,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.3333333333333333,
+      "repeated_error_rate": 0.6666666666666666
+    },
+    "Qwen/Qwen2.5-7B-Instruct|full_regeneration": {
+      "final_accuracy": 0.9,
+      "generated_token_count": 103.11111111111111,
+      "parse_error_rate": 0.4444444444444444,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.3333333333333333,
+      "repeated_error_rate": 0.4444444444444444
+    },
+    "Qwen/Qwen2.5-7B-Instruct|oracle_tracepatch_subset": {
+      "final_accuracy": 0.3333333333333333,
+      "generated_token_count": 45,
+      "parse_error_rate": 0.0,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.3333333333333333,
+      "repeated_error_rate": 0.3333333333333333
+    },
+    "Qwen/Qwen2.5-7B-Instruct|self_correction": {
+      "final_accuracy": 0.9,
+      "generated_token_count": 44,
+      "parse_error_rate": 0.2222222222222222,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.3333333333333333,
+      "repeated_error_rate": 0.6666666666666666
+    },
+    "Qwen/Qwen2.5-7B-Instruct|tracepatch": {
+      "final_accuracy": 0.9166666666666666,
+      "generated_token_count": 59.22222222222222,
+      "parse_error_rate": 0.0,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.4444444444444444,
+      "repeated_error_rate": 0.3333333333333333
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3|edit_only_repair": {
+      "final_accuracy": 0.7333333333333333,
+      "generated_token_count": 80.66666666666667,
+      "parse_error_rate": 0.05555555555555555,
+      "prefix_damage_rate": 0.05555555555555555,
+      "repair_success_on_failed": 0.1111111111111111,
+      "repeated_error_rate": 0.7777777777777778
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3|full_regeneration": {
+      "final_accuracy": 0.8,
+      "generated_token_count": 103.16666666666667,
+      "parse_error_rate": 0.05555555555555555,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.3333333333333333,
+      "repeated_error_rate": 0.5
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3|oracle_tracepatch_subset": {
+      "final_accuracy": 0.25,
+      "generated_token_count": 55,
+      "parse_error_rate": 0.0,
+      "prefix_damage_rate": 0.25,
+      "repair_success_on_failed": 0.25,
+      "repeated_error_rate": 0.75
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3|self_correction": {
+      "final_accuracy": 0.7333333333333333,
+      "generated_token_count": 88.27777777777777,
+      "parse_error_rate": 0.1111111111111111,
+      "prefix_damage_rate": 0.0,
+      "repair_success_on_failed": 0.1111111111111111,
+      "repeated_error_rate": 0.7222222222222222
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3|tracepatch": {
+      "final_accuracy": 0.7333333333333333,
+      "generated_token_count": 86.88888888888889,
+      "parse_error_rate": 0.2222222222222222,
+      "prefix_damage_rate": 0.16666666666666666,
+      "repair_success_on_failed": 0.1111111111111111,
+      "repeated_error_rate": 0.5555555555555556
+    }
+  },
+  "verdict": "no scale"
+}
